@@ -10,3 +10,6 @@ venv0/
 
 # Visual code files
 .vscode
+
+# python workbench file
+workbench.py
