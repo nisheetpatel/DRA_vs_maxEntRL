@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, Protocol, Tuple
 import gym.spaces
 import numpy as np
+import random
 
 
 class Environment(Protocol):
@@ -118,7 +119,7 @@ class Maze:
         self._goal_states = [[8, 0]]
 
         # all obstacles
-        self._obstacles = [[2, 1], [2, 2], [2, 3], [7, 0], [7, 1], [7, 2], [5, 4]]
+        self._obstacles = [[2, 1], [2, 2], [2, 3], [7, 0], [7, 1], [7, 2], [4, 4]]
 
         # environment switching properties
         self._new_goal = [[6, 0]]
@@ -128,7 +129,7 @@ class Maze:
         self.q_size = (self._world_width, self._world_height, self.action_space.n)
 
         # max steps
-        self.max_steps = float("inf")
+        self.max_steps = 200
 
     @property
     def action_space(self):
@@ -136,6 +137,7 @@ class Maze:
 
     def reset(self):
         self._state = self._start_state
+        self._step_counter = 0
         return self._state
 
     def step(self, action):
@@ -156,6 +158,7 @@ class Maze:
         reward = -1
         done = False
         info = None
+        self._step_counter += 1
 
         # unless agent reached a goal state or hit a wall
         if next_state in self._goal_states:
@@ -163,6 +166,10 @@ class Maze:
             done = True
         elif next_state in self._obstacles:
             next_state = self._state
+        
+        # enforce max episode length
+        if self._step_counter == 200:
+            done = True
 
         # set next state as current state, return next state as list
         self._state = next_state
@@ -177,167 +184,158 @@ class Maze:
         return
 
 
+def option_choice_set_2afc(state: int):
+    """Returns choice set for Memory_2AFC task."""
+    if state < 12:
+        if state % 3 == 0:
+            choice_set = [state + 1, state + 2]  # 1 v 2; PMT 0
+        elif state % 3 == 1:
+            choice_set = [state - 1, state + 1]  # 0 v 2; PMT 1
+        else:
+            choice_set = [state - 2, state - 1]  # 0 v 1; PMT 2
+    elif state < 24:
+        choice_set = [state - 12, state]
+    elif state < 36:
+        choice_set = [state - 24, state]
+    return choice_set
+
+@dataclass
 class Memory2AFC:
     """
     2AFC task with 12 options, grouped into 4 sets of 3 options each.
     On each trial, one of the four sets is selected with probability
     p(set), and two options are drawn from it uniformly at random.
+    This is an attempt at re-coding it RL style with 36 states and 
+    2 actions (left, right) in each state. Reward is a function of 
+    state and action.
     """
+    n_states = 36
+    n_actions = 2
+    _delta_1 = 4
+    _delta_2 = 1
+    _delta_pmt = 4
+    _rel_freq = 4
+    n_training_episodes = 2040
+    n_testing_episodes = 1020
+    n_bonus_trials_per_option = 20
 
-    def __init__(
-        self,
-        episodes_train=510,
-        episodes_pmt=1020,
-        n_pmt=20,
-        learnPMT=False,
-        delta_1=4,
-        delta_2=1,
-        delta_pmt=4,
-    ):
+    def __post_init__(self):
+        # initialize states and q-size
+        self._states = np.arange(self.n_states)
+        self.q_size = (self.n_states + 1)
+        
+        # define rewards for "options"
+        option_rewards = [
+            10 + self._delta_1, 10, 10 - self._delta_1,
+            10 + self._delta_2, 10, 10 - self._delta_2,
+            10 + self._delta_1, 10, 10 - self._delta_1,
+            10 + self._delta_2, 10, 10 - self._delta_2,
+        ]        
+        good_bonus_option_rewards  = list(np.array(option_rewards) + self._delta_pmt)
+        bad_bonus_option_rewards = list(np.array(option_rewards) - self._delta_pmt)
+        self.option_rewards = option_rewards + good_bonus_option_rewards + bad_bonus_option_rewards
 
-        # states, acitons, and probability of occurance of states
-        self.n_states = 12 * 3
-        self.states = np.arange(self.n_states)
-        # self.pstate = [.4]*6 + [.1]*6 + [0]*24
-
-        # actions and size of the q-table
-        self.actions = np.arange(12 * 3)  # normal, PMT+, PMT-
-        self.q_size = len(self.actions) + 1  # terminal
-
-        # Defining rewards:
-        self.delta_1 = delta_1
-        self.delta_2 = delta_2
-        self.rewards = [
-            10 + self.delta_1,
-            10,
-            10 - self.delta_1,
-            10 + self.delta_2,
-            10,
-            10 - self.delta_2,
-            10 + self.delta_1,
-            10,
-            10 - self.delta_1,
-            10 + self.delta_2,
-            10,
-            10 - self.delta_2,
-        ]
-        # The steps below shouldn't be necessary, but I'm including them
-        self.delta_pmt = delta_pmt
-        self.rewards += list(np.array(self.rewards) + self.delta_pmt) + list(
-            np.array(self.rewards) - self.delta_pmt
+        # define state distribution (frequency with which they appear)
+        self._state_distribution = np.append(
+            np.repeat(np.arange(6), self._rel_freq), np.arange(6, 12), axis=0
         )
 
-        # Experimental design: selecting the sequence of states
-        self.episode = 0
-        self.episodes_train = episodes_train
-        self.episodes_pmt = episodes_pmt
-        self.episodes = episodes_train + episodes_pmt
-        self.learnPMT = learnPMT
+        # pregenerate episodes
+        self._episode = 0
+        self._pregenerate_episodes()
 
-        # pre-generating the sequence of states
-        self.state_distribution = np.append(
-            np.repeat(np.arange(6), 4), np.arange(6, 12), axis=0
-        )
-
-        self.states_training = np.repeat(
-            self.state_distribution, self.episodes_train / len(self.state_distribution)
-        )
-        np.random.shuffle(self.states_training)
-        np.random.shuffle(self.states_training)
-
-        self.states_PMT = np.repeat(
-            self.state_distribution, (self.episodes_pmt) / len(self.state_distribution)
-        )
-        np.random.shuffle(self.states_PMT)
-        np.random.shuffle(self.states_PMT)
-
-        self.states_pregen = np.append(self.states_training, self.states_PMT)
-        # self.states_pregen = np.append(states_PMT[:(self.episodes-len(self.states_pregen))], self.states_pregen)
-
-        # current state and next states
-        self.state = self.states_pregen[self.episode]
-        self.next_states = np.array([None] * len(self.states_pregen))
-
-        # setting PMT trial indices and type (+Delta or -Delta)
-        self.pmt_trial = np.zeros(len(self.states_pregen))
-        self.n_pmt = n_pmt
-
-        for ii in range(12):
-            idx_ii = np.where(self.states_pregen == ii)[
-                0
-            ]  # get index where state == ii
-            idx_ii = idx_ii[idx_ii > self.episodes_train]  # throw away training indices
-            np.random.shuffle(idx_ii)  # shuffle what's left
-            idx_i1 = idx_ii[: int(n_pmt / 2)]  # indices for +Delta PMT trials
-            idx_i2 = idx_ii[int(n_pmt / 2) : n_pmt]  # indices for -Delta PMT trials
-
-            # indicate pmt trial and type
-            self.pmt_trial[idx_i1] = 1
-            self.pmt_trial[idx_i2] = -1
-
-            # for first half: next_state is option vs. +Delta deterministic option
-            self.next_states[idx_i1] = self.states_pregen[idx_i1] + 12
-
-            # for second half: -Delta deterministic option
-            self.next_states[idx_i2] = self.states_pregen[idx_i2] + 24
-
-    def reset(self, newEpisode=False):
-        self.state = self.states_pregen[self.episode]
-        if newEpisode:
-            self.episode += 1
-        if self.episode == self.episodes:
-            self.episode -= 1
-            # print('Reached final episode.')
-        return [self.state]
+        # known option rewards
+        self.q_fixed = np.array([False] * 12 + [True] * 24)
+        self.q_initial = np.append(self.option_rewards * self.q_fixed, 0)
+        self.q_initial = np.array(self.q_initial, dtype=float)
+        self.q_fixed = np.append(self.q_fixed, np.array([True]))  # terminal
 
     @property
     def action_space(self):
-        if self.state < 12:
-            if self.state % 3 == 0:
-                choiceSet = [self.state + 1, self.state + 2]  # 1 v 2; PMT 0
-            elif self.state % 3 == 1:
-                choiceSet = [self.state - 1, self.state + 1]  # 0 v 2; PMT 1
-            else:
-                choiceSet = [self.state - 2, self.state - 1]  # 0 v 1; PMT 2
-        elif self.state < 24:
-            choiceSet = [self.state - 12, self.state]
-        elif self.state < 36:
-            choiceSet = [self.state - 24, self.state]
-        np.random.shuffle(choiceSet)
-        return choiceSet
+        return gym.spaces.Discrete(2)
 
-    # point to location in q-table
-    def idx(self, state, action):
-        idx = action
-        return idx
+    @property
+    def option_choice_set(self):
+        return option_choice_set_2afc(state=self._state)
 
-    # step in the environment
+    def reward(self, action):
+        option_chosen = self.option_choice_set[action]
+        reward = self.option_rewards[option_chosen]
+
+        # stochastic rewards for the regular options
+        if option_chosen < 12:
+            reward += np.random.randn()
+
+        return reward
+    
+    def _generate_episode_sequence(self, n_episodes):
+        episode_sequence = np.repeat(self._state_distribution, 
+                n_episodes / len(self._state_distribution))
+        np.random.shuffle(episode_sequence)
+        return episode_sequence
+
+    def _insert_bonus_episodes(self, test_episodes):
+        """function to insert bonus trials in given sequence"""
+        # for each of the twelve options
+        for option_id in range(12):
+            # determine and pick relevant trials
+            ids = [i for i in range(len(test_episodes)) if test_episodes[i] == option_id]
+            
+            # randomly select n_bonus_trials_per_option/2 for good and bad bonus options
+            np.random.shuffle(ids)            
+            ids_plus_Delta = ids[: int(self.n_bonus_trials_per_option / 2)]
+            ids_minus_Delta = ids[
+                int(self.n_bonus_trials_per_option / 2) : self.n_bonus_trials_per_option
+            ]
+
+            # put them together and sort in reverse order
+            # so that insertion does not change the indexing
+            ids_both_Delta = ids_plus_Delta + ids_minus_Delta
+            ids_both_Delta.sort(reverse=True)
+            ids.sort()
+
+            # insert bonus trials
+            for idx in ids_both_Delta:
+                if idx in ids_plus_Delta:
+                    test_episodes.insert(idx + 1, test_episodes[idx] + 12)
+                elif idx in ids_minus_Delta:
+                    test_episodes.insert(idx + 1, test_episodes[idx] + 24)
+
+        return np.array(test_episodes)
+
+    def _pregenerate_episodes(self) -> None:
+        # Episodes
+        training_episodes = self._generate_episode_sequence(self.n_training_episodes)
+        test_episodes = self._generate_episode_sequence(self.n_testing_episodes)
+        test_episodes = self._insert_bonus_episodes(list(test_episodes))
+        self._episode_list = np.append(training_episodes, test_episodes)
+        return
+
+    def reset(self):
+        """
+        Because this task/expt pre-generates a sequence of episodes 
+        that are to be followed in that order, this reset function 
+        updates the state to the next one from the list.
+        """
+        if self._episode < len(self._episode_list):
+            self._state = self._episode_list[self._episode]
+            return [self._state]
+
     def step(self, action):
-        # info: [updateQ?, allocGrad?]
-        if self.state < 12:
-            info = [True, True]
+        if self._episode < len(self._episode_list):
+            # next state, reward, termination
+            next_state = [-1]
+            reward = self.reward(action)
+            done = True
+            info = None
+
+            # update episode counter
+            self._episode += 1
+
+            return next_state, reward, done, info
+        
         else:
-            info = [False, self.learnPMT]
-
-        # next state
-        if self.state < 12:
-            next_state = self.next_states[self.episode]
-            self.state = next_state
-        else:
-            next_state = None
-        # self.next_states[self.episode] = None
-
-        # reward
-        reward = self.rewards[action]
-        if action < 12:
-            reward += np.random.randn()  # stochastic rewards
-
-        # termination
-        done = True if next_state is None else False
-
-        next_state = [next_state] if not isinstance(next_state, list) else next_state
-
-        return next_state, reward, done, info
+            print(f"Ignoring step calls beyond what the environment allows.")
 
 
 class BottleneckTask:
@@ -512,26 +510,8 @@ class BottleneckTask:
         return next_state, reward, done, info
 
 
-#########################################################################
-#                                                                       #
-# Other tasks that we tried running DRA on include the planning task    #
-# from Huys et al 2015, a T-maze, a wrapper for arbitrary 2D gridwords  #
-# which we used to create the Mattar & Daw 2019 maze, and a couple of   #
-# mazes we tried for the human experiments with Antonio Rangel but      #
-# eventually gave up on. Though they are not being used in the current  #
-# experiments, they live below. In order to be used with the current    #
-# DynamicResourceAllocator object, they need to be modified slightly    #
-# to have the openAI gym-like structure as in the BottleneckTask above. #
-#                                                                       #
-#########################################################################
-
-"""
-Defines the class environment as per Huys-Dayan-Rosier's planning task
-& the agent's long-term tabular memories: (s,a), r(s,a), Q(s,a), pi(a|s).
-"""
-
-
 class HuysTask:
+    """Huys, ..., Dayan, Rosier 2011 planning task."""
     # @transition_matrix:   State transition matrix
     # @reward_matrix:       Rewards corresponding to state transitions
     # @n_states:            Number of states
