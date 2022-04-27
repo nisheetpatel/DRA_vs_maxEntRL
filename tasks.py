@@ -1,6 +1,6 @@
 from ctypes import Union
 from dataclasses import dataclass
-from typing import Optional, Protocol, Tuple
+from typing import Protocol, Tuple
 import gym.spaces
 import numpy as np
 import random
@@ -18,21 +18,13 @@ class Environment(Protocol):
         ...
 
 
-@dataclass
-class EnvironmentAttributes:
-    n_states: int
-    transitions: Optional[list[int, int]]
-    rewards: Optional[list]
+def setup_transition_matrix(n_states: int, transitions: list[int, int]):
+    transition_matrix = np.zeros((n_states, n_states), dtype=int)
+    
+    for state, next_state in transitions:
+        transition_matrix[state, next_state] = 1
 
-    @property
-    def transition_matrix(self):
-        try:
-            transition_matrix = np.zeros(shape=(self.n_states, self.n_states))
-            for state, next_state in self.transitions:
-                transition_matrix[state, next_state] = 1
-        except NameError:
-            raise "Cannot create transition matrix without user-defined transitions"
-        return transition_matrix
+    return transition_matrix
 
 
 class ZiebartTask:
@@ -46,10 +38,9 @@ class ZiebartTask:
         transitions = [[0, 1], [0, 2], [1, 3], [2, 3], [2, 4], [3, 5], [4, 5]]
         if rewards == None:
             rewards = [0, 0, 0, 0, 0, 1]
-        env_attributes = EnvironmentAttributes(n_states, transitions, rewards)
 
         # internally accessible properties
-        self._transition_matrix = env_attributes.transition_matrix
+        self._transition_matrix = setup_transition_matrix(n_states, transitions)
         self._rewards = rewards
         self._start_state = 0
         self._state = self._start_state
@@ -184,7 +175,7 @@ class Maze:
         return
 
 
-def option_choice_set_2afc(state: int):
+def option_choice_set_2afc(state: int) -> list:
     """Returns choice set for Memory_2AFC task."""
     if state < 12:
         if state % 3 == 0:
@@ -338,234 +329,292 @@ class Memory2AFC:
             print(f"Ignoring step calls beyond what the environment allows.")
 
 
-class BottleneckTask:
-    # @transition_matrix:   State transition matrix
-    # @reward_matrix:       Rewards corresponding to state transitions
-    # @n_states:            Number of states
-    # @states:              State indices
-    def __init__(
-        self,
-        n_stages=2,
-        stochastic_rewards=True,
-        stochastic_choice_sets=True,
-        version=1,
-    ):
-        self.version = version
-        self.start_state = 0
-        self.state = self.start_state
-        self.stochastic_rewards = stochastic_rewards
-        self.stochastic_choice_sets = stochastic_choice_sets
+@dataclass
+class Memory2AFCmdp:
+    """
+    2AFC task with 12 options, grouped into 4 sets of 3 options each.
+    On each trial, one of the four sets is selected with probability
+    p(set), and two options are drawn from it uniformly at random.
+    This is an attempt at re-coding it RL style with 36 states and 
+    2 actions (left, right) in each state. Reward is a function of 
+    state and action.
+    """
+    bonus_options: bool = False
+    n_states = 37
+    n_actions = 2
+    _delta_1 = 4
+    _delta_2 = 1
+    _delta_pmt = 4
+    _rel_freq = 4
+    _bonus_option_probability = 0.15
+    
+    def __post_init__(self):
+        # initialize states and q-size
+        self._states = np.arange(self.n_states)
+        self.q_size = (self.n_states)
 
-        # Defining one stage of the task (to be repeated)
-        self.module = np.mat(
-            "1 1 1 1 0 0 0 0 0 0 0;\
-             0 0 0 0 1 0 0 0 0 0 0;\
-             0 0 0 0 1 0 0 0 0 0 0;\
-             0 0 0 0 0 1 0 0 0 0 0;\
-             0 0 0 0 0 1 0 0 0 0 0;\
-             0 0 0 0 0 0 1 1 0 0 0;\
-             0 0 0 0 0 0 0 0 1 1 0;\
-             0 0 0 0 0 0 0 0 0 0 1;\
-             0 0 0 0 0 0 0 0 0 0 1;\
-             0 0 0 0 0 0 0 0 0 0 1;\
-             0 0 0 0 0 0 0 0 0 0 1"
-        )
+        # define rewards, state distribution, 
+        self.option_rewards = self._define_option_rewards()
+        self._state_distribution = self._define_state_distribution()
+        self.info_for_agent = self._define_info_for_agent()
 
-        # Concatenating n_stages task stages
-        trMat = np.kron(np.eye(n_stages), self.module)
+    def _define_option_rewards(self) -> list:
+        # define rewards for each of the twelve "options"
+        option_rewards = [
+            10 + self._delta_1, 10, 10 - self._delta_1,
+            10 + self._delta_2, 10, 10 - self._delta_2,
+            10 + self._delta_1, 10, 10 - self._delta_1,
+            10 + self._delta_2, 10, 10 - self._delta_2,
+        ]        
+        good_bonus_option_rewards  = list(np.array(option_rewards) + self._delta_pmt)
+        bad_bonus_option_rewards = list(np.array(option_rewards) - self._delta_pmt)
+        return (option_rewards + good_bonus_option_rewards + bad_bonus_option_rewards)
 
-        # Adding first and last states
-        self.transition_matrix = np.zeros((trMat.shape[0] + 1, trMat.shape[1] + 1))
-        self.transition_matrix[:-1, 1:] = trMat
-        self.transition_matrix[-1, -1] = 1
+    def _define_state_distribution(self):
+        # define array with states acc. to their rel. appearance freq.
+        state_distribution = np.append(np.repeat(
+            np.arange(6), self._rel_freq), np.arange(6, 12), axis=0)
+        np.random.shuffle(state_distribution)
+        return state_distribution
 
-        # Transitions, rewards, states
-        self.n_states = len(self.transition_matrix)
-        self.states = np.arange(self.n_states)
-        self.transitions = np.transpose(self.transition_matrix.nonzero())
+    def _define_info_for_agent(self):
+        """
+        The agent needs to know some things about this task, which
+        is what this function defines. It returns a dictionary with
+        the indices for which agents' q-values should be fixed and 
+        rewards for known (bonus) options as initial q-values.
+        """
+        # define quantities to be declared to the agent
+        fixed_qs = np.array([False] * 12 + [True] * 24)
+        initial_qs = np.append(self.option_rewards * fixed_qs, 0)
 
-        # Defining rewards for version 1:
-        # key states:                   if 3 stages:
-        # p_visit = (.5, .5, .8, .2)    + (.8, .2)
-        # dq      = (40, 20, 25, 40)    + (15, 30)
-        rewards1 = np.array([0, 140, 50, 100, 20, 0, 0, 20, -20, 20, 0])
-        rewards2 = np.array([0, 60, 0, 20, -20, 0, 0, 20, -5, 20, -20])
-        rewards3 = np.array([0, 140, 40, 100, 70, 0, 0, 20, 5, 20, -10])
+        # put them in a dictionary
+        info_for_agent = {}
+        info_for_agent["initial_qs"] = np.array(initial_qs, dtype=float)
+        info_for_agent["fixed_qs"] = np.append(fixed_qs, np.array([True]))
 
-        if version == 2:
-            # p_visit = (.8, .2, .8, .2)    + (.8, .2)
-            # dq      = (40, 20, 25, 40)    + (15, 30)
-            rewards3 = np.array([0, 140, 50, 100, 20, 0, 0, 20, 10, 20, -10])
+        return info_for_agent
 
-        elif version == 3:
-            # p_visit = (.6, .4, .8, .2)    + (.8, .2)
-            # dq      = (40, 20, 25, 40)    + (15, 30)
-            rewards1 = np.array([0, 140, 20, 100, 50, 0, 0, 20, -20, 20, 0])
+    @property
+    def action_space(self) -> gym.spaces:
+        return gym.spaces.Discrete(2)
 
-        if n_stages == 2:
-            self.rewards = np.hstack((rewards1, rewards2, 0))
+    @property
+    def option_choice_set(self) -> list:
+        return option_choice_set_2afc(state=self._state)
 
-        elif n_stages == 3:
-            self.rewards = np.hstack((rewards1, rewards2, rewards3, 0))
+    def reward(self, action):
+        option_chosen = self.option_choice_set[action]
+        reward = self.option_rewards[option_chosen]
 
+        # stochastic rewards for the regular options
+        if option_chosen < 12:
+            reward += np.random.randn()
+
+        return reward
+    
+    def reset(self):
+        self._state = np.random.choice(self._state_distribution)
+        return [self._state]
+
+    def _transition(self):
+        # defaults
+        next_state = [-1]
+        done = True
+
+        # define prob. of bonus options
+        if self._state < 6:
+            p = self._bonus_option_probability
+        elif 6 <= self._state < 12:
+            p = self._rel_freq * self._bonus_option_probability
         else:
-            raise Exception("Current only supporting 2-3 stages")
+            return next_state, done
+        
+        if np.random.binomial(n=1, p=p):
+            done = False
+            if np.random.binomial(n=1, p=0.5):
+                # good bonus option
+                next_state = [self._state + 12]
+            else:
+                # bad bonus option
+                next_state = [self._state + 24]
+        
+        return next_state, done
 
-        # actions available from each state
-        self.actions = [
-            list(self.transition_matrix[ii].nonzero()[0])
-            for ii in range(len(self.transition_matrix))
-        ]
+    def step(self, action):
+        match self.bonus_options:
+            case False:
+                next_state = [-1]
+                done = True
+            case True:
+                next_state, done = self._transition()
+        
+        reward = self.reward(action)
+        info = None
+            
+        return next_state, reward, done, info
 
-        # the size of q value
-        self.q_size = len(self.transitions)
+
+# transitions for bottleneck class and option_choice_set function
+bottleneck_transitions = np.array([
+    [0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], #
+    [1, 7], [1, 8], [2, 7], [2, 9],     # top branch
+    [3, 7], [3, 10], [5, 8], [5, 10],   # top branch
+    [4, 8], [4, 9], [6, 9], [6, 10],    # bottom branch
+    [7, 11], [8, 11], [9, 12], [10, 12],
+    [11, 13], [11, 14], [12, 15], [12, 16],
+    [13, 0], [14, 0], [15, 0], [16, 0]])
+
+def option_choice_set_bottleneck(state: int, 
+        all_transitions: np.array = bottleneck_transitions):
+    row_idx = (all_transitions[:,0] == state)
+    choice_set = all_transitions[row_idx, 1]
+    return list(choice_set)
+
+@dataclass
+class Bottleneck:
+    n_stages: int = 2
+    stochastic_rewards: bool = True
+    stochastic_choice_sets: bool = True
+    _transitions: np.array = bottleneck_transitions
+    _n_steps_per_stage: int = 5
+    _step_count: int = 0
+    _first_transition_weights: tuple = (0.2,0.2,0.2,0.1,0.2,0.1)
+
+    def __post_init__(self):
+        assert self.n_stages <= 3, "Cannot have more than 3 stages"
+
+        # defining n_options and q_size
+        self.n_options_per_stage = np.max(self._transitions) + 1
+        self.n_options = self.n_options_per_stage * self.n_stages
+        self.q_size = (self.n_options) + 1
+
+        # key states' properties:      if 3 stages:
+        # p_visit = (.8, .2, .8, .2)    + (.8, .2)
+        # dq      = (40, 20, 25, 40)    + (15, 30)
+        self._transition_matrix = setup_transition_matrix(
+            self.n_options_per_stage, self._transitions)
+
+        # max steps
+        self.n_max_steps = self.n_stages * self._n_steps_per_stage
+
+    @property
+    def rewards(self):
+        rewards  = np.array([0,0,0,0,0,0,0,140,50,100, 20,0,0,20,-20,20,  0])
+        rewards2 = np.array([0,0,0,0,0,0,0, 60, 0, 20,-20,0,0,20,-5, 20,-20])
+        rewards3 = np.array([0,0,0,0,0,0,0,140,40,100, 70,0,0,20, 5, 20,-10])
+
+        if self._step_count >= self._n_steps_per_stage:
+            rewards = rewards2
+        elif self._step_count >= 2 * self._n_steps_per_stage:
+            rewards = rewards3
+
+        return rewards
 
     def reset(self):
-        self.state = self.start_state
-        return self.start_state
+        self._step_count = 0
+        self._state = 0
+        return [self._state]
+
+    @property
+    def choice_set(self):
+        return option_choice_set_bottleneck(self._state)
 
     @property
     def action_space(self):
-        assert self.state <= self.n_states
+        return gym.spaces.Discrete(len(self.choice_set))
 
-        if self.stochastic_choice_sets:
+    def _autorun_first_transition(self):
+        """Automatically transition when in state 0."""
+        assert self._state == 0,\
+            f"Can only transition without an action in state 0, not in state {self._state}"
+        return np.random.choice(np.arange(1,7), p=self._first_transition_weights)
 
-            if np.mod(self.state, 11) != 0:
-                # Bottleneck states are 0, 11, 22
-                choiceSet = self.actions[self.state]
-
-            elif self.state == 0:
-                choiceList = [[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]]
-
-                if self.version == 1:
-                    # p_visit(5,6) = (.5, .5)
-                    choiceSet = random.choices(
-                        choiceList, weights=(1, 1, 1, 2, 1, 2), k=1
-                    )[0]
-
-                else:
-                    # version 2: p_visit(5,6) = (.8, .2)
-                    # version 3: p_visit(5,6) = (.6, .4)    (bec of diff. rewards)
-                    choiceSet = random.choices(
-                        choiceList, weights=(2, 2, 2, 1, 2, 1), k=1
-                    )[0]
-
-            elif self.state == 11:
-                # p_visit(16,17) = (.8, .2)
-                choiceList = [
-                    [12, 13],
-                    [12, 14],
-                    [12, 15],
-                    [13, 14],
-                    [13, 15],
-                    [14, 15],
-                ]
-                choiceSet = random.choices(choiceList, weights=(2, 2, 2, 1, 2, 1), k=1)[
-                    0
-                ]
-
-            elif self.state == 22:
-                # p_visit(27,28) = (.8, .2)
-                choiceList = [
-                    [23, 24],
-                    [23, 25],
-                    [23, 26],
-                    [24, 25],
-                    [24, 26],
-                    [25, 26],
-                ]
-                choiceSet = random.choices(choiceList, weights=(2, 2, 2, 1, 2, 1), k=1)[
-                    0
-                ]
-
-        else:
-            choiceSet = self.actions[self.state]
-
-        return choiceSet
-
-    # point to location in q-table
-    def idx(self, state, action):
-        ii = np.logical_and(
-            self.transitions[:, 0] == state, self.transitions[:, 1] == action
-        )
-        return np.searchsorted(ii, True) - 1
-
-    # step in the environment
     def step(self, action):
-        # next state
-        next_state = action
-        self.state = next_state
-
+        if self._state == 0:
+            next_state = self._autorun_first_transition()
+        else:
+            next_state = self._transition_matrix[self._state].nonzero()[0][action]
+        
         # reward
         reward = self.rewards[next_state]
         if self.stochastic_rewards:
             reward += np.random.randn()
 
-        # termination and info/logs
+        # update state and step count        
+        self._state = next_state
+        self._step_count += 1
+
+        # determine termination
         done = False
-        if next_state == self.n_states - 1:
+        if self._step_count == self.n_max_steps:
             done = True
         info = None
+        
+        # return separate next_state for each stage for agent
+        if self._step_count >= self._n_steps_per_stage:
+            next_state += self.n_options_per_stage
+        # return next_state as list
+        next_state = [next_state] if not isinstance(next_state, list) else next_state
+
+        return next_state, reward, done, info
+
+@dataclass
+class HuysTask:
+    """Huys, ..., Dayan, Rosier 2011 planning task."""
+    n_max_steps: int = 3
+    n_actions: int = 2
+
+    def __post_init__(self):
+        self._transition_matrix = np.mat(
+            "0 1 0 1 0 0;\
+            0 0 1 0 1 0;\
+            0 0 0 1 0 1;\
+            0 1 0 0 1 0;\
+            1 0 0 0 0 1;\
+            1 0 1 0 0 0"
+        )
+        self._reward_matrix = np.mat(
+            "0   140  0   20  0   0; \
+             0   0   -20  0  -70  0; \
+             0   0    0  -20  0  -70;\
+             0   20   0   0  -20  0; \
+            -70  0    0   0   0  -20;\
+            -20  0    20  0   0   0"
+        )
+        
+        self.n_states = len(self._transition_matrix)
+
+    @property
+    def action_space(self):
+        return gym.spaces.Discrete(self.n_actions)
+
+    def reset(self):
+        self._step_count = 0
+        self._state = np.random.choice(self.n_states)
+        return [self._state]
+
+    def step(self, action):
+        # next state
+        next_state = self._transition_matrix[self._state].nonzero()[1][action]
+        reward = self._reward_matrix[self._state, next_state]
+        done = False
+        if self._step_count == self.n_max_steps:
+            done = True
+        info = None
+        
+        # change state and 
+        self._state = next_state
+        self._step_count += 1
+
+        # return next_state as list
+        next_state = [next_state] if not isinstance(next_state, list) else next_state
 
         return next_state, reward, done, info
 
 
-class HuysTask:
-    """Huys, ..., Dayan, Rosier 2011 planning task."""
-    # @transition_matrix:   State transition matrix
-    # @reward_matrix:       Rewards corresponding to state transitions
-    # @n_states:            Number of states
-    # @states:              State indices
-    def __init__(self, depth=3, n_states=6):
-        self.depth = depth
-        transitions = np.mat(
-            "0 1 0 1 0 0;\
-                            0 0 1 0 1 0;\
-                            0 0 0 1 0 1;\
-                            0 1 0 0 1 0;\
-                            1 0 0 0 0 1;\
-                            1 0 1 0 0 0"
-        )
-        rewards = np.mat(
-            "0   140  0   20  0   0; \
-                          0   0   -20  0  -70  0; \
-                          0   0    0  -20  0  -70;\
-                          0   20   0   0  -20  0; \
-                         -70  0    0   0   0  -20;\
-                         -20  0    20  0   0   0"
-        )
-
-        # Setting up the transitions and rewards matrices for the
-        # extended state space: 6 -> 6 x T_left
-        self.transition_matrix = np.zeros(
-            ((depth + 1) * n_states, (depth + 1) * n_states), dtype=int
-        )
-        self.reward_matrix = np.zeros(
-            ((depth + 1) * n_states, (depth + 1) * n_states), dtype=int
-        )
-
-        nrows = transitions.shape[0]
-        Nrows = self.transition_matrix.shape[0]
-
-        for i in range(nrows, Nrows, nrows):
-            self.transition_matrix[i - nrows : i, i : i + nrows] = transitions
-
-        for i in range(nrows, Nrows, nrows):
-            self.reward_matrix[i - nrows : i, i : i + nrows] = rewards
-
-        # Transitions, rewards, states
-        self.n_states = len(self.transition_matrix)
-        self.states = np.arange(self.n_states)
-        self.transitions = np.transpose(self.transition_matrix.nonzero())
-        self.rewards = np.array(self.reward_matrix[self.reward_matrix != 0])
-
-
-"""
-Custom-made two-step T-maze with 14 states.
-"""
-
-
 class Tmaze:
+    """Custom-made two-step T-maze with 14 states."""
     # @transition_matrix:   State transition matrix
     # @reward_matrix:       Rewards corresponding to state transitions
     # @n_states:            Number of states

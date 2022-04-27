@@ -2,7 +2,7 @@ from typing import Protocol
 from dataclasses import dataclass
 from scipy.stats import entropy
 import numpy as np
-from tasks import option_choice_set_2afc
+from tasks import option_choice_set_2afc, option_choice_set_bottleneck
 
 
 class Agent(Protocol):
@@ -40,6 +40,14 @@ def memory_2afc_task_indexer(state: list, action: int = None, n_actions: int = 2
         return state[0]
         
     choice_set = option_choice_set_2afc(state=state[0])
+    if action is None:
+        return choice_set
+    else:
+        return choice_set[action]
+
+def bottleneck_task_indexer(state: list, action: int = None, n_actions = None):
+    """Returns q-table index for Memory_2AFC task as tuple"""
+    choice_set = option_choice_set_bottleneck(state=state[0])
     if action is None:
         return choice_set
     else:
