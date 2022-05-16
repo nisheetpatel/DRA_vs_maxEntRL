@@ -8,6 +8,9 @@ env/
 venv/
 venv0/
 
+# figure folder
+figures/
+
 # Visual code files
 .vscode
 

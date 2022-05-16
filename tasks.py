@@ -20,7 +20,7 @@ class Environment(Protocol):
 
 def setup_transition_matrix(n_states: int, transitions: list[int, int]):
     transition_matrix = np.zeros((n_states, n_states), dtype=int)
-    
+
     for state, next_state in transitions:
         transition_matrix[state, next_state] = 1
 
@@ -146,18 +146,18 @@ class Maze:
 
         # default next state, reward, done, info
         next_state = [x, y]
-        reward = -1
+        reward = -10
         done = False
         info = None
         self._step_counter += 1
 
         # unless agent reached a goal state or hit a wall
         if next_state in self._goal_states:
-            reward = 10
+            reward = 100
             done = True
         elif next_state in self._obstacles:
             next_state = self._state
-        
+
         # enforce max episode length
         if self._step_counter == 200:
             done = True
@@ -190,16 +190,18 @@ def option_choice_set_2afc(state: int) -> list:
         choice_set = [state - 24, state]
     return choice_set
 
+
 @dataclass
 class Memory2AFC:
     """
     2AFC task with 12 options, grouped into 4 sets of 3 options each.
     On each trial, one of the four sets is selected with probability
     p(set), and two options are drawn from it uniformly at random.
-    This is an attempt at re-coding it RL style with 36 states and 
-    2 actions (left, right) in each state. Reward is a function of 
+    This is an attempt at re-coding it RL style with 36 states and
+    2 actions (left, right) in each state. Reward is a function of
     state and action.
     """
+
     n_states = 36
     n_actions = 2
     _delta_1 = 4
@@ -213,18 +215,28 @@ class Memory2AFC:
     def __post_init__(self):
         # initialize states and q-size
         self._states = np.arange(self.n_states)
-        self.q_size = (self.n_states + 1)
-        
+        self.q_size = self.n_states + 1
+
         # define rewards for "options"
         option_rewards = [
-            10 + self._delta_1, 10, 10 - self._delta_1,
-            10 + self._delta_2, 10, 10 - self._delta_2,
-            10 + self._delta_1, 10, 10 - self._delta_1,
-            10 + self._delta_2, 10, 10 - self._delta_2,
-        ]        
-        good_bonus_option_rewards  = list(np.array(option_rewards) + self._delta_pmt)
+            10 + self._delta_1,
+            10,
+            10 - self._delta_1,
+            10 + self._delta_2,
+            10,
+            10 - self._delta_2,
+            10 + self._delta_1,
+            10,
+            10 - self._delta_1,
+            10 + self._delta_2,
+            10,
+            10 - self._delta_2,
+        ]
+        good_bonus_option_rewards = list(np.array(option_rewards) + self._delta_pmt)
         bad_bonus_option_rewards = list(np.array(option_rewards) - self._delta_pmt)
-        self.option_rewards = option_rewards + good_bonus_option_rewards + bad_bonus_option_rewards
+        self.option_rewards = (
+            option_rewards + good_bonus_option_rewards + bad_bonus_option_rewards
+        )
 
         # define state distribution (frequency with which they appear)
         self._state_distribution = np.append(
@@ -238,6 +250,7 @@ class Memory2AFC:
         # known option rewards
         self.q_fixed = np.array([False] * 12 + [True] * 24)
         self.q_initial = np.append(self.option_rewards * self.q_fixed, 0)
+        self.q_initial[:12] = 10
         self.q_initial = np.array(self.q_initial, dtype=float)
         self.q_fixed = np.append(self.q_fixed, np.array([True]))  # terminal
 
@@ -258,10 +271,11 @@ class Memory2AFC:
             reward += np.random.randn()
 
         return reward
-    
+
     def _generate_episode_sequence(self, n_episodes):
-        episode_sequence = np.repeat(self._state_distribution, 
-                n_episodes / len(self._state_distribution))
+        episode_sequence = np.repeat(
+            self._state_distribution, n_episodes / len(self._state_distribution)
+        )
         np.random.shuffle(episode_sequence)
         return episode_sequence
 
@@ -270,10 +284,12 @@ class Memory2AFC:
         # for each of the twelve options
         for option_id in range(12):
             # determine and pick relevant trials
-            ids = [i for i in range(len(test_episodes)) if test_episodes[i] == option_id]
-            
+            ids = [
+                i for i in range(len(test_episodes)) if test_episodes[i] == option_id
+            ]
+
             # randomly select n_bonus_trials_per_option/2 for good and bad bonus options
-            np.random.shuffle(ids)            
+            np.random.shuffle(ids)
             ids_plus_Delta = ids[: int(self.n_bonus_trials_per_option / 2)]
             ids_minus_Delta = ids[
                 int(self.n_bonus_trials_per_option / 2) : self.n_bonus_trials_per_option
@@ -304,8 +320,8 @@ class Memory2AFC:
 
     def reset(self):
         """
-        Because this task/expt pre-generates a sequence of episodes 
-        that are to be followed in that order, this reset function 
+        Because this task/expt pre-generates a sequence of episodes
+        that are to be followed in that order, this reset function
         updates the state to the next one from the list.
         """
         if self._episode < len(self._episode_list):
@@ -324,7 +340,7 @@ class Memory2AFC:
             self._episode += 1
 
             return next_state, reward, done, info
-        
+
         else:
             print(f"Ignoring step calls beyond what the environment allows.")
 
@@ -335,10 +351,11 @@ class Memory2AFCmdp:
     2AFC task with 12 options, grouped into 4 sets of 3 options each.
     On each trial, one of the four sets is selected with probability
     p(set), and two options are drawn from it uniformly at random.
-    This is an attempt at re-coding it RL style with 36 states and 
-    2 actions (left, right) in each state. Reward is a function of 
+    This is an attempt at re-coding it RL style with 36 states and
+    2 actions (left, right) in each state. Reward is a function of
     state and action.
     """
+
     bonus_options: bool = False
     n_states = 37
     n_actions = 2
@@ -347,13 +364,13 @@ class Memory2AFCmdp:
     _delta_pmt = 4
     _rel_freq = 4
     _bonus_option_probability = 0.15
-    
+
     def __post_init__(self):
         # initialize states and q-size
         self._states = np.arange(self.n_states)
-        self.q_size = (self.n_states)
+        self.q_size = self.n_states
 
-        # define rewards, state distribution, 
+        # define rewards, state distribution,
         self.option_rewards = self._define_option_rewards()
         self._state_distribution = self._define_state_distribution()
         self.info_for_agent = self._define_info_for_agent()
@@ -361,19 +378,28 @@ class Memory2AFCmdp:
     def _define_option_rewards(self) -> list:
         # define rewards for each of the twelve "options"
         option_rewards = [
-            10 + self._delta_1, 10, 10 - self._delta_1,
-            10 + self._delta_2, 10, 10 - self._delta_2,
-            10 + self._delta_1, 10, 10 - self._delta_1,
-            10 + self._delta_2, 10, 10 - self._delta_2,
-        ]        
-        good_bonus_option_rewards  = list(np.array(option_rewards) + self._delta_pmt)
+            10 + self._delta_1,
+            10,
+            10 - self._delta_1,
+            10 + self._delta_2,
+            10,
+            10 - self._delta_2,
+            10 + self._delta_1,
+            10,
+            10 - self._delta_1,
+            10 + self._delta_2,
+            10,
+            10 - self._delta_2,
+        ]
+        good_bonus_option_rewards = list(np.array(option_rewards) + self._delta_pmt)
         bad_bonus_option_rewards = list(np.array(option_rewards) - self._delta_pmt)
-        return (option_rewards + good_bonus_option_rewards + bad_bonus_option_rewards)
+        return option_rewards + good_bonus_option_rewards + bad_bonus_option_rewards
 
     def _define_state_distribution(self):
         # define array with states acc. to their rel. appearance freq.
-        state_distribution = np.append(np.repeat(
-            np.arange(6), self._rel_freq), np.arange(6, 12), axis=0)
+        state_distribution = np.append(
+            np.repeat(np.arange(6), self._rel_freq), np.arange(6, 12), axis=0
+        )
         np.random.shuffle(state_distribution)
         return state_distribution
 
@@ -381,7 +407,7 @@ class Memory2AFCmdp:
         """
         The agent needs to know some things about this task, which
         is what this function defines. It returns a dictionary with
-        the indices for which agents' q-values should be fixed and 
+        the indices for which agents' q-values should be fixed and
         rewards for known (bonus) options as initial q-values.
         """
         # define quantities to be declared to the agent
@@ -412,7 +438,7 @@ class Memory2AFCmdp:
             reward += np.random.randn()
 
         return reward
-    
+
     def reset(self):
         self._state = np.random.choice(self._state_distribution)
         return [self._state]
@@ -429,7 +455,7 @@ class Memory2AFCmdp:
             p = self._rel_freq * self._bonus_option_probability
         else:
             return next_state, done
-        
+
         if np.random.binomial(n=1, p=p):
             done = False
             if np.random.binomial(n=1, p=0.5):
@@ -438,7 +464,7 @@ class Memory2AFCmdp:
             else:
                 # bad bonus option
                 next_state = [self._state + 24]
-        
+
         return next_state, done
 
     def step(self, action):
@@ -448,28 +474,65 @@ class Memory2AFCmdp:
                 done = True
             case True:
                 next_state, done = self._transition()
-        
+
         reward = self.reward(action)
         info = None
-            
+
         return next_state, reward, done, info
 
 
 # transitions for bottleneck class and option_choice_set function
-bottleneck_transitions = np.array([
-    [0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], #
-    [1, 7], [1, 8], [2, 7], [2, 9],     # top branch
-    [3, 7], [3, 10], [5, 8], [5, 10],   # top branch
-    [4, 8], [4, 9], [6, 9], [6, 10],    # bottom branch
-    [7, 11], [8, 11], [9, 12], [10, 12],
-    [11, 13], [11, 14], [12, 15], [12, 16],
-    [13, 0], [14, 0], [15, 0], [16, 0]])
+bottleneck_transitions = np.array(
+    [
+        [0, 1],
+        [0, 2],
+        [0, 3],
+        [0, 4],
+        [0, 5],
+        [0, 6],  #
+        [1, 7],
+        [1, 8],
+        [2, 7],
+        [2, 9],  # top branch
+        [3, 7],
+        [3, 10],
+        [5, 8],
+        [5, 10],  # top branch
+        [4, 8],
+        [4, 9],
+        [6, 9],
+        [6, 10],  # bottom branch
+        [7, 11],
+        [8, 11],
+        [9, 12],
+        [10, 12],
+        [11, 13],
+        [11, 14],
+        [12, 15],
+        [12, 16],
+        [13, 17],
+        [14, 17],
+        [15, 17],
+        [16, 17],
+    ]
+)
 
-def option_choice_set_bottleneck(state: int, 
-        all_transitions: np.array = bottleneck_transitions):
-    row_idx = (all_transitions[:,0] == state)
+bottleneck_transitions = np.vstack(
+    (
+        bottleneck_transitions,
+        bottleneck_transitions + np.max(bottleneck_transitions),
+        [34, 34],
+    )
+)
+
+
+def option_choice_set_bottleneck(
+    state: int, all_transitions: np.array = bottleneck_transitions
+):
+    row_idx = all_transitions[:, 0] == state
     choice_set = all_transitions[row_idx, 1]
     return list(choice_set)
+
 
 @dataclass
 class Bottleneck:
@@ -477,42 +540,30 @@ class Bottleneck:
     stochastic_rewards: bool = True
     stochastic_choice_sets: bool = True
     _transitions: np.array = bottleneck_transitions
-    _n_steps_per_stage: int = 5
-    _step_count: int = 0
-    _first_transition_weights: tuple = (0.2,0.2,0.2,0.1,0.2,0.1)
+    _first_transition_weights: tuple = (0.2, 0.2, 0.2, 0.1, 0.2, 0.1)
 
     def __post_init__(self):
-        assert self.n_stages <= 3, "Cannot have more than 3 stages"
+        assert self.n_stages == 2, f"Only 2 stages are currently supported"
 
         # defining n_options and q_size
-        self.n_options_per_stage = np.max(self._transitions) + 1
-        self.n_options = self.n_options_per_stage * self.n_stages
-        self.q_size = (self.n_options) + 1
+        self.n_options = np.max(self._transitions) + 1
+        self.q_size = self.n_options
 
         # key states' properties:      if 3 stages:
         # p_visit = (.8, .2, .8, .2)    + (.8, .2)
         # dq      = (40, 20, 25, 40)    + (15, 30)
         self._transition_matrix = setup_transition_matrix(
-            self.n_options_per_stage, self._transitions)
+            self.n_options, self._transitions
+        )
+        self.rewards = self._define_rewards()
 
-        # max steps
-        self.n_max_steps = self.n_stages * self._n_steps_per_stage
-
-    @property
-    def rewards(self):
-        rewards  = np.array([0,0,0,0,0,0,0,140,50,100, 20,0,0,20,-20,20,  0])
-        rewards2 = np.array([0,0,0,0,0,0,0, 60, 0, 20,-20,0,0,20,-5, 20,-20])
-        rewards3 = np.array([0,0,0,0,0,0,0,140,40,100, 70,0,0,20, 5, 20,-10])
-
-        if self._step_count >= self._n_steps_per_stage:
-            rewards = rewards2
-        elif self._step_count >= 2 * self._n_steps_per_stage:
-            rewards = rewards3
-
-        return rewards
+    def _define_rewards(self):
+        zeros = np.array([0, 0, 0, 0, 0, 0, 0])
+        rewards1 = np.array([140, 50, 100, 20, 0, 0, 20, -20, 20, 0])
+        rewards2 = np.array([60, 0, 20, -20, 0, 0, 20, -5, 20, -20])
+        return np.hstack((zeros, rewards1, zeros, rewards2, 0))
 
     def reset(self):
-        self._step_count = 0
         self._state = 0
         return [self._state]
 
@@ -524,44 +575,44 @@ class Bottleneck:
     def action_space(self):
         return gym.spaces.Discrete(len(self.choice_set))
 
-    def _autorun_first_transition(self):
+    def _autorun_bottleneck_transition(self):
         """Automatically transition when in state 0."""
-        assert self._state == 0,\
-            f"Can only transition without an action in state 0, not in state {self._state}"
-        return np.random.choice(np.arange(1,7), p=self._first_transition_weights)
+        assert (self._state == 0) | (
+            self._state == (self.n_options / 2)
+        ), f"Can only transition without an action in state 0 or 17, not in state {self._state}"
+        return np.random.choice(np.arange(1, 7), p=self._first_transition_weights)
 
     def step(self, action):
-        if self._state == 0:
-            next_state = self._autorun_first_transition()
+        if (self._state == 0) | (self._state == (self.n_options / 2)):
+            next_state = self._autorun_bottleneck_transition()
         else:
             next_state = self._transition_matrix[self._state].nonzero()[0][action]
-        
-        # reward
-        reward = self.rewards[next_state]
-        if self.stochastic_rewards:
-            reward += np.random.randn()
-
-        # update state and step count        
-        self._state = next_state
-        self._step_count += 1
 
         # determine termination
         done = False
-        if self._step_count == self.n_max_steps:
+        if next_state == self.n_options - 1:
             done = True
         info = None
-        
-        # return separate next_state for each stage for agent
-        if self._step_count >= self._n_steps_per_stage:
-            next_state += self.n_options_per_stage
+
+        # reward
+        reward = self.rewards[next_state]
+        if self.stochastic_rewards & (not done):
+            if self._state not in [0, self.n_options / 2]:
+                reward += np.random.randn()
+
+        # update state and step count
+        self._state = next_state
+
         # return next_state as list
         next_state = [next_state] if not isinstance(next_state, list) else next_state
 
         return next_state, reward, done, info
 
+
 @dataclass
 class HuysTask:
     """Huys, ..., Dayan, Rosier 2011 planning task."""
+
     n_max_steps: int = 3
     n_actions: int = 2
 
@@ -582,7 +633,7 @@ class HuysTask:
             -70  0    0   0   0  -20;\
             -20  0    20  0   0   0"
         )
-        
+
         self.n_states = len(self._transition_matrix)
 
     @property
@@ -602,8 +653,8 @@ class HuysTask:
         if self._step_count == self.n_max_steps:
             done = True
         info = None
-        
-        # change state and 
+
+        # change state and
         self._state = next_state
         self._step_count += 1
 
@@ -615,6 +666,7 @@ class HuysTask:
 
 class Tmaze:
     """Custom-made two-step T-maze with 14 states."""
+
     # @transition_matrix:   State transition matrix
     # @reward_matrix:       Rewards corresponding to state transitions
     # @n_states:            Number of states
