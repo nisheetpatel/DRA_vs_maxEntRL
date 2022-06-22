@@ -7,7 +7,7 @@ In this project, we would like to analyze whether memory resource allocation & e
 1. Are they behaviorally identical?
    - so far, simulations indicate that they are largely identical
 2. Can we cast them in the same framework to analyze the differences analytically?
-   - yes, using [RL as inference](https://arxiv.org/abs/1805.00909)
+   - yes, using [RL as inference](https://arxiv.org/abs/1805.00909). The detailed proofs will be published with the paper.
 3. What are the implications for neuroscientists?
 
 ### Frequency and stakes for MaxEntRL
