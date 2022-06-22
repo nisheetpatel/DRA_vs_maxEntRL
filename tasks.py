@@ -1,4 +1,3 @@
-from ctypes import Union
 from dataclasses import dataclass
 from typing import Protocol, Tuple
 import gym.spaces
