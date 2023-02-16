@@ -24,7 +24,7 @@ for run in range(3):
     # defining agents
     # agent1 = DRA(q_size=env1.q_size, sigma_base=5, lmda=0.1)
     # agent2 = MaxEntRL_2AFC(q_size=env2.q_size, alpha=4)
-    alphas = [0.1, 1, 2, 3, 4, 10]
+    alphas = [0.1, 0.5, 1, 2.5, 5, 10]
     envs = [Memory2AFC() for _ in range(len(alphas))]
     agents = [
         MaxEntRL(q_size=envs[0].q_size, alpha=alpha, _index=memory_2afc_task_indexer)
@@ -133,16 +133,18 @@ df_pmt = pd.concat(dfs_pmt_all_runs).reset_index()
 
 # plot
 # choice accuracy on pmt trials only
-sns.lineplot(x="set", y="Choice accuracy", hue="alpha", data=df_pmt.reset_index())
-plt.title(f"MaxEntRL PMT trials; all runs combined")
-plt.savefig(
-    f"./figures/memory2afc/choice_accuracy_maxentRL_PMT_all_runs_combined_regAgent.svg"
-)
-plt.close()
+# sns.lineplot(x="set", y="Choice accuracy", hue="alpha", data=df_pmt.reset_index())
+# plt.title(f"MaxEntRL PMT trials; all runs combined")
+# plt.show()
+# plt.savefig(
+#     f"./figures/memory2afc/choice_accuracy_maxentRL_PMT_all_runs_combined_regAgent.svg"
+# )
+# plt.close()
 
 # choice accuracy on all trials
-sns.lineplot(x="set", y="Choice accuracy", hue="alpha", data=df.reset_index())
-plt.title(f"MaxEntRL PMT trials; all runs combined")
+g = sns.lineplot(x="set", y="Choice accuracy", hue="alpha", data=df.reset_index())
+g.set(xticks=[1, 2, 3, 4])
+plt.title(f"MaxEntRL all trials; all runs combined")
 plt.savefig(
     f"./figures/memory2afc/choice_accuracy_maxentRL_nonPMT_all_runs_combined_regAgent.svg"
 )

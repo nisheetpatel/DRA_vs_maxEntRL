@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from typing import Protocol, Tuple
 import gym.spaces
 import numpy as np
-import random
 
 
 class Environment(Protocol):
+    """A protocol for an environment that can be used by an RL agent."""
     @property
     def action_space() -> gym.spaces.Discrete:
         ...
@@ -558,7 +558,7 @@ class Bottleneck:
 
     def _define_rewards(self):
         zeros = np.array([0, 0, 0, 0, 0, 0, 0])
-        rewards1 = np.array([140, 50, 100, 20, 0, 0, 20, -20, 20, 0])
+        rewards1 = np.array([140, 50, 100, 20, 0, 0, 20, -20, 20, -5])
         rewards2 = np.array([60, 0, 20, -20, 0, 0, 20, -5, 20, -20])
         return np.hstack((zeros, rewards1, zeros, rewards2, 0))
 
