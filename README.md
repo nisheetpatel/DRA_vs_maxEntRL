@@ -1,6 +1,7 @@
 # [DRA](https://papers.nips.cc/paper/2020/hash/c4fac8fb3c9e17a2f4553a001f631975-Abstract.html) vs [Max Ent RL](https://arxiv.org/pdf/1801.01290.pdf)
 
-In this project, we would like to analyze whether memory resource allocation & entropy regularization in RL can be thought of as two sides of the same coin. Refer to [the documents](docs/) for the pre-draft collection-of-thoughts-and-results. The code is currently functional but not packaged well into modules; I will update it before publishing.
+In this project, we would like to analyze whether memory resource allocation & entropy regularization in RL can be thought of as two sides of the same coin. Refer to [the documents](docs) for the pre-draft collection-of-thoughts-and-results. The code is currently functional but not packaged well into modules; I will update it before publishing.
+
 
 ### Key questions
 
